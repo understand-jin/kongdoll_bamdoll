@@ -1,97 +1,25 @@
-from util import *
 import numpy as np
-import time
 import random
+import time
 from itertools import permutations
+from util import Bundle, solution_check, Rider, Order, select_two_bundles, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
+from first_version_simple import algorithm
+#from myalgorithm import algorithm
 
-def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
-    start_time = time.time()
 
-    for r in all_riders:
-        r.T = np.round(dist_mat / r.speed + r.service_time)
-
-    # A solution is a list of bundles
-    solution = []
-
-    #------------- Custom algorithm code starts from here --------------#
-
-    bike_riders = [r for r in all_riders if r.type == 'BIKE']
-    car_riders = [r for r in all_riders if r.type == 'CAR']
-    walk_riders = [r for r in all_riders if r.type == 'WALK']
-
-    all_bundles = []
-
-    for ord in all_orders:
-        if bike_riders:
-            bike_rider = bike_riders.pop(0)
-            new_bundle = Bundle(all_orders, bike_rider, [ord.id], [ord.id], ord.volume, dist_mat[ord.id, ord.id+K])
-            all_bundles.append(new_bundle)
-            bike_rider.available_number -= 1
-            if bike_rider.available_number > 0:
-                bike_riders.append(bike_rider)
-        elif car_riders:
-            car_rider = car_riders.pop(0)
-            new_bundle = Bundle(all_orders, car_rider, [ord.id], [ord.id], ord.volume, dist_mat[ord.id, ord.id+K])
-            all_bundles.append(new_bundle)
-            car_rider.available_number -= 1
-            if car_rider.available_number > 0:
-                car_riders.append(car_rider)
-
-    best_obj = sum((bundle.cost for bundle in all_bundles)) / K
-    print(f'Best obj = {best_obj}')
-
-    # Very stupid random merge algorithm
-    while True:
-        iter = 0
-        max_merge_iter = 1000
-        
-        while iter < max_merge_iter:
-            bundle1, bundle2 = select_two_bundles(all_bundles)
-            new_bundle = try_merging_bundles(K, dist_mat, all_orders, bundle1, bundle2)
-
-            if new_bundle is not None:
-                all_bundles.remove(bundle1)
-                bundle1.rider.available_number += 1
-                
-                all_bundles.remove(bundle2)
-                bundle2.rider.available_number += 1
-
-                all_bundles.append(new_bundle)
-                new_bundle.rider.available_number -= 1
-
-                cur_obj = sum((bundle.cost for bundle in all_bundles)) / K
-                if cur_obj < best_obj:
-                    best_obj = cur_obj
-                    print(f'Best obj = {best_obj}')
+def initialize_population(K, all_orders, all_riders, dist_mat, population_size=50, timelimit=60):
+    population = []
+    for i in range(50):
+        try:
+            # 매 반복마다 새로운 라이더와 주문 리스트를 초기화해야 함
+            new_riders = [Rider([r.type, r.speed, r.capa, r.var_cost, r.fixed_cost, r.service_time, r.available_number]) for r in all_riders]
+            new_orders = [Order([o.id, o.order_time, o.shop_lat, o.shop_lon, o.dlv_lat, o.dlv_lon, o.cook_time, o.volume, o.deadline]) for o in all_orders]
+            solution = algorithm(K, new_orders, new_riders, dist_mat, timelimit)
+            if solution:
+                population.append(solution)
+                print(f"Initial solution {i}: {solution}")  # 디버깅 출력
             else:
-                iter += 1
-
-            if time.time() - start_time > timelimit:
-                break
-
-        if time.time() - start_time > timelimit:
-            break
-
-        for bundle in all_bundles:
-            new_rider = get_cheaper_available_riders(all_riders, bundle.rider)
-            if new_rider is not None:
-                old_rider = bundle.rider
-                if try_bundle_rider_changing(all_orders, dist_mat, bundle, new_rider):
-                    old_rider.available_number += 1
-                    new_rider.available_number -= 1
-
-                if time.time() - start_time > timelimit:
-                    break
-
-        cur_obj = sum((bundle.cost for bundle in all_bundles)) / K
-        if cur_obj < best_obj:
-            best_obj = cur_obj
-            print(f'Best obj = {best_obj}')
-
-    # Solution is a list of bundle information
-    solution = [
-        [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
-        for bundle in all_bundles
-    ]
-
-    return solution
+                print(f"Initial solution {i} is None or invalid")
+        except Exception as e:
+            print(f"Exception during solution generation {i}: {e}")
+    return population

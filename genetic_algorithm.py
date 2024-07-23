@@ -2,26 +2,46 @@ import numpy as np
 import random
 import time
 from itertools import permutations
-from util import Bundle, solution_check, select_two_bundles, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
+from util import Bundle, solution_check, Rider, Order, select_two_bundles, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
 from first_version_simple import algorithm
 #from myalgorithm import algorithm
 
-# 1. Initial solution generation(num : 50)
+
 def initialize_population(K, all_orders, all_riders, dist_mat, population_size=50, timelimit=60):
     population = []
-    for _ in range(population_size):
-        solution = algorithm(K, all_orders, all_riders, dist_mat, timelimit)
-        population.append(solution)
+    for i in range(50):
+        try:
+            # 매 반복마다 새로운 라이더와 주문 리스트를 초기화해야 함
+            new_riders = [Rider([r.type, r.speed, r.capa, r.var_cost, r.fixed_cost, r.service_time, r.available_number]) for r in all_riders]
+            new_orders = [Order([o.id, o.order_time, o.shop_lat, o.shop_lon, o.dlv_lat, o.dlv_lon, o.cook_time, o.volume, o.deadline]) for o in all_orders]
+            solution = algorithm(K, new_orders, new_riders, dist_mat, timelimit)
+            if solution:
+                population.append(solution)
+                #print(f"Initial solution {i}: {solution}")  # 디버깅 출력
+            else:
+                print("d")
+                #print(f"Initial solution {i} is None or invalid")
+        except Exception as e:
+            print(f"Exception during solution generation {i}: {e}")
     return population
 
-# 2. FItness definition
+# def fitness(solution, K, all_orders, all_riders, dist_mat):
+#     checked_solution = solution_check(K, all_orders, all_riders, dist_mat, solution)
+#     if checked_solution['feasible']:
+#         fit_value = checked_solution['total_cost'] / K
+#         #print(f"Solution fitness: {fit_value}")  # 디버깅 출력
+#         return fit_value
+#     else:
+#         #print(f"Solution infeasible: {checked_solution['infeasibility']}")  # 디버깅 출력
+#         return float('inf')  # 유효하지 않은 해의 경우 무한대 비용 반환
+
 def fitness(solution, K, all_orders, all_riders, dist_mat):
     checked_solution = solution_check(K, all_orders, all_riders, dist_mat, solution)
-    if checked_solution['feasible']:
-        return checked_solution['total_cost'] / K  # 목적함수: 총 비용을 주문 수로 나눈 값
-    else:
-        return float('inf')  # 유효하지 않은 해의 경우 무한대 비용 반환
-    
+    fit_value = checked_solution['total_cost'] / K
+    print(f"Solution fitness: {fit_value}")  # 디버깅 출력
+    return fit_value
+
+
 #3. Selection considering fitness
 def select_population(population, population_fitness, num_selections):
     #1. 적합도 값이 무한대가 아닌 해 들의 역수의 합을 계산함
@@ -108,7 +128,7 @@ def replacement(population, new_population, K, all_orders, all_riders, dist_mat,
     return next_generation
 
 #Genetic_Algorithm
-def genetic_algorithm(K, all_orders, all_riders, dist_mat, population_size=50, generations=100, crossover_rate=0.8, mutation_rate=0.05, elite_size=2, timelimit=60):
+def genetic_algorithm(K, all_orders, all_riders, dist_mat, population_size, generations, crossover_rate=0.8, mutation_rate=0.05, elite_size=2, timelimit=60):
     start_time = time.time()
 
     # 초기 해 생성
@@ -116,6 +136,7 @@ def genetic_algorithm(K, all_orders, all_riders, dist_mat, population_size=50, g
     
     best_solution = None
     best_fitness = float('inf')
+    print(f"bestbest : {best_fitness}")
 
     for generation in range(generations):
         if time.time() - start_time > timelimit:
@@ -124,6 +145,7 @@ def genetic_algorithm(K, all_orders, all_riders, dist_mat, population_size=50, g
 
         # 적합도 계산
         population_fitness = [fitness(solution, K, all_orders, all_riders, dist_mat) for solution in population]
+        print(population_fitness)
 
         # 현재 세대에서 최적 해 찾기
         current_best_solution = min(population, key=lambda sol: fitness(sol, K, all_orders, all_riders, dist_mat))
@@ -136,6 +158,7 @@ def genetic_algorithm(K, all_orders, all_riders, dist_mat, population_size=50, g
 
         # 선택
         selected_population = select_population(population, population_fitness, population_size)
+        print(f"selected_value : {selected_population}")
 
         # 교차
         new_population = []
