@@ -4,6 +4,7 @@ import time
 from itertools import permutations
 from util import Bundle, solution_check, Rider, Order, get_avg_cost, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
 from first_version_simple import algorithm
+#from myalgorithm import algorithm
 
 def initialize_population(K, all_orders, all_riders, dist_mat, population_size=50, timelimit=60):
     population = []
@@ -15,42 +16,30 @@ def initialize_population(K, all_orders, all_riders, dist_mat, population_size=5
             solution = algorithm(K, new_orders, new_riders, dist_mat, timelimit)
             if solution:
                 population.append(solution)
-                #print(f"Initial solution {i}: {solution}")  # 디버깅 출력
             else:
-                print("d")
-                #print(f"Initial solution {i} is None or invalid")
+                pass
         except Exception as e:
             print(f"Exception during solution generation {i}: {e}")
     return population
 
 def fitness(solution, K, all_orders, all_riders, dist_mat):
-    try:
-        checked_solution = solution_check(K, all_orders, all_riders, dist_mat, solution)
-        if checked_solution['feasible']:
-            total_cost = 0
-            total_orders = len(all_orders)
-            
-            for bundle_info in solution:
-                rider_type = bundle_info[0]
-                shop_seq = bundle_info[1]
-                dlv_seq = bundle_info[2]
-                
-                # Get the rider object
-                rider = next(r for r in all_riders if r.type == rider_type)
-                
-                # Calculate the total distance for the bundle
-                total_dist = get_total_distance(K, dist_mat, shop_seq, dlv_seq)
-                
-                # Calculate the cost for this bundle
-                bundle_cost = rider.fixed_cost + (total_dist / 100) * rider.var_cost
-                total_cost += bundle_cost
-                
-            avg_cost = total_cost / total_orders
-            print(f"Solution fitness (average cost): {avg_cost}")  # 디버깅 출력
-            return avg_cost
-        else:
-            print(f"Solution infeasible: {checked_solution['infeasibility']}")
-            return float('inf')
-    except Exception as e:
-        print(f"Exception in fitness calculation: {e}")
+    # solution_check 함수를 사용하여 주어진 solution의 타당성 검사
+    checked_solution = solution_check(K, all_orders, all_riders, dist_mat, solution)
+
+    # Solution이 유효한 경우 평균 비용을 반환
+    if checked_solution['feasible']:
+        print(f"fitness : {checked_solution['avg_cost']}")
+        return checked_solution['avg_cost']
+    else:
+        # Solution이 유효하지 않은 경우 매우 큰 값을 반환하여 선택되지 않도록 함
         return float('inf')
+    
+def select_population(population, population_fitness, num_selections):
+    #1. 적합도 값이 무한대가 아닌 해 들의 역수의 합을 계산함
+    total_fitness = sum(1 / f for f in population_fitness if f != float('inf')) 
+    #2. 각 해의 선택 확률을 계산함
+    selection_probs = [(1 / f) / total_fitness if f != float('inf') else 0 for f in population_fitness]
+    #3. 주어진 확률에 따라 해를 선택함
+    selected_population = random.choices(population, weights=selection_probs, k=num_selections)
+    return selected_population
+
