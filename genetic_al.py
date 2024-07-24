@@ -34,8 +34,12 @@ def genetic_algorithm(K, all_orders, all_riders, dist_mat, population_size, gene
         #print(f"Generation {generation}: New best fitness = {best_fitness}")
 
     # 선택
-    selected_population = select_population(population, population_fitness, 20)
-    print(f"selection = {selected_population}")
+    selected_population = select_population(population, population_fitness, 19)
+    selected_population.append(best_solution)
+    selected_population_fitness = [fitness(solution, K, all_orders, all_riders, dist_mat) for solution in selected_population]
+    print(f"selection = {selected_population_fitness}")
+
+
 
 
     return best_solution
