@@ -4,7 +4,7 @@ import time
 from itertools import permutations
 from util import Bundle, solution_check, Rider, Order, select_two_bundles, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
 from first_version_simple import algorithm
-from Assistance import initialize_population, fitness, select_population
+from Assistance import initialize_population, fitness, select_population, crossover
 
 
 #Genetic_Algorithm
@@ -39,6 +39,15 @@ def genetic_algorithm(K, all_orders, all_riders, dist_mat, population_size, gene
     selected_population_fitness = [fitness(solution, K, all_orders, all_riders, dist_mat) for solution in selected_population]
     print(f"selection = {selected_population_fitness}")
 
+    new_population = []
+    for i in range(0, len(selected_population), 2):
+        parent1 = selected_population[i]
+        parent2 = selected_population[i + 1] if i + 1 < len(selected_population) else selected_population[0]
+        if random.random() < crossover_rate:
+            child1, child2 = crossover(parent1, parent2, K, all_orders, dist_mat, all_riders)
+            new_population.extend([child1, child2])
+        else:
+            new_population.extend([parent1, parent2])
 
 
 
