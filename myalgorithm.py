@@ -4,7 +4,38 @@ import itertools
 import random
 from itertools import permutations
 from util import Bundle, select_two_bundles, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
-from efficiency_indicator import calculate_efficiencies
+
+def calculate_efficiencies(K, all_riders, all_orders, dist_mat):
+    # 모든 주문의 부피 평균 계산
+    order_volumes = [order.volume for order in all_orders]
+    avg_volume = np.mean(order_volumes)
+
+    # d1, d2, d3 계산
+    d1 = np.sum(dist_mat[:K, :K]) / 2500
+    d2 = np.sum(dist_mat[:K, K:2*K]) / 2500
+    d3 = np.sum(dist_mat[K:2*K, K:2*K]) / 2500
+
+    # 각 배달원의 효율성 지표 계산 함수
+    def calculate_efficiency(rider, avg_volume, d1, d2, d3):
+        capacity = rider.capa
+        variable_cost = rider.var_cost
+        fixed_cost = rider.fixed_cost
+        
+        Ri = (0.8 * capacity) / avg_volume
+        Xi = (Ri - 1) * d1 + (Ri - 1) * d3 + d2
+        efficiency = fixed_cost + (Xi / 100) * variable_cost
+        
+        return efficiency
+
+    # 각 배달원의 효율성 지표 계산
+    efficiencies = []
+    for rider in all_riders:
+        rider_type = rider.type
+        efficiency = calculate_efficiency(rider, avg_volume, d1, d2, d3)
+        efficiencies.append([rider_type, efficiency])
+
+    # 효율성 지표 반환
+    return efficiencies
 
 def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_orders=30):
     bundle_size = len(current_bundle)
@@ -22,6 +53,7 @@ def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_order
     distances.sort(key=lambda x: x[1])
     nearest_orders = [order for order, _ in distances[:num_orders]]
     return nearest_orders
+
 
 
 def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
@@ -45,6 +77,9 @@ def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
         while True:
             nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, 30)
             added = False
+
+            if K > 200 and len(current_bundle) >= 4:
+                break
             
             for next_order in nearest_orders:
                 if current_volume + next_order.volume > rider.capa:
@@ -106,8 +141,8 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit = 60):
         r.T = np.round(dist_mat / r.speed + r.service_time)
 
     # 효율성 지표 (예시로 임의의 값 사용)
-    #effectiveness_indicator = calculate_efficiencies(problem_file)
-    effectiveness_indicator = [['bike', 100], ['car', 200], ['walk', 300]]
+    effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
+    #effectiveness_indicator = [['bike', 100], ['car', 200], ['walk', 300]]
     #print(effectiveness_indicator)
     effectiveness_dict = {rider.type: effectiveness for rider, effectiveness in zip(all_riders, effectiveness_indicator)}
 
