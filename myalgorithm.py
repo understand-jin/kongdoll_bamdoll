@@ -78,7 +78,7 @@ def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
             nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, 30)
             added = False
 
-            if K > 200 and len(current_bundle) >= 4:
+            if len(current_bundle) >= 4:
                 break
             
             for next_order in nearest_orders:
@@ -141,8 +141,8 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit = 60):
         r.T = np.round(dist_mat / r.speed + r.service_time)
 
     # 효율성 지표 (예시로 임의의 값 사용)
-    effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
-    #effectiveness_indicator = [['bike', 100], ['car', 200], ['walk', 300]]
+    #effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
+    effectiveness_indicator = [['bike', 100], ['car', 200], ['walk', 300]]
     #print(effectiveness_indicator)
     effectiveness_dict = {rider.type: effectiveness for rider, effectiveness in zip(all_riders, effectiveness_indicator)}
 
