@@ -1,5 +1,6 @@
 import numpy as np
 import time
+import itertools
 import random
 from itertools import permutations
 from util import Bundle, select_two_bundles, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
@@ -22,6 +23,7 @@ def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_order
     nearest_orders = [order for order, _ in distances[:num_orders]]
     return nearest_orders
 
+
 def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
     bundles = []
     remaining_orders = orders[:]
@@ -39,7 +41,6 @@ def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
         
         current_volume = current_order.volume
         current_time = current_order.ready_time
-        first_order = current_order
 
         while True:
             nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, 30)
@@ -52,38 +53,41 @@ def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
                 current_bundle_ids = [o.id for o in current_bundle]
                 next_bundle_ids = [next_order.id]
 
-                combined_shop_seq = current_bundle_ids + next_bundle_ids
-                combined_delivery_seq = sorted(combined_shop_seq, key=lambda order_id: all_orders[order_id].deadline)
+                combined_ids = current_bundle_ids + next_bundle_ids
+                pickup_permutations = itertools.permutations(combined_ids)
 
-                new_bundle = Bundle(all_orders, rider, combined_shop_seq, combined_delivery_seq, current_volume + next_order.volume, 0)
-                new_bundle.total_dist = get_total_distance(K, dist_mat, combined_shop_seq, combined_delivery_seq)
-                new_bundle.update_cost()
+                valid_combinations = []
+                
+                for perm_shop_seq in pickup_permutations:
+                    delivery_permutations = itertools.permutations(perm_shop_seq)
+                    for perm_dlv_seq in delivery_permutations:
+                        new_bundle = Bundle(all_orders, rider, list(perm_shop_seq), list(perm_dlv_seq), current_volume + next_order.volume, 0)
+                        new_bundle.total_dist = get_total_distance(K, dist_mat, list(perm_shop_seq), list(perm_dlv_seq))
+                        new_bundle.update_cost()
 
-                is_feasible = test_route_feasibility(all_orders, rider, combined_shop_seq, combined_delivery_seq)
-                merged_bundle = None
-                if is_feasible == 0:
-                    merged_bundle = try_merging_bundles(K, dist_mat, all_orders, Bundle(all_orders, rider, current_bundle_ids, current_bundle_ids, current_volume, 0), Bundle(all_orders, rider, next_bundle_ids, next_bundle_ids, next_order.volume, 0))
+                        is_feasible = test_route_feasibility(all_orders, rider, list(perm_shop_seq), list(perm_dlv_seq))
+                        if is_feasible == 0:
+                            valid_combinations.append((list(perm_shop_seq), list(perm_dlv_seq)))
 
-                if merged_bundle is not None:
+                if valid_combinations:
+                    best_combination = min(valid_combinations, key=lambda x: get_total_distance(K, dist_mat, x[0], x[1]))
+                    best_shop_seq, best_dlv_seq = best_combination
+
                     current_bundle.append(next_order)
                     current_volume += next_order.volume
                     current_time += rider.T[current_bundle[-2].id, next_order.id]
                     remaining_orders.remove(next_order)
                     added = True
+
+                    # 선택된 best_shop_seq와 best_dlv_seq로 번들 갱신
+                    shop_seq = best_shop_seq
+                    delivery_seq = best_dlv_seq
                     break
 
             if not added:
                 break
-            # 번들에 주문이 추가될 때마다 nearest_orders 갱신
-            nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, 30)
 
-        shop_seq = [order.id for order in current_bundle]
-
-        delivery_seq = shop_seq[:]
-        delivery_seq.sort(key=lambda order_id: all_orders[order_id].deadline)
-        best_dlv_seq = delivery_seq
-
-        final_bundle = Bundle(all_orders, rider, shop_seq, best_dlv_seq, current_volume, get_total_distance(K, dist_mat, shop_seq, best_dlv_seq))
+        final_bundle = Bundle(all_orders, rider, shop_seq, delivery_seq, current_volume, get_total_distance(K, dist_mat, shop_seq, delivery_seq))
         bundles.append(final_bundle)
         rider.available_number -= 1
 
@@ -95,7 +99,7 @@ def assign_riders_with_weighted_probability(riders, effectiveness_indicator):
     selected_rider = random.choices(riders, weights=weights, k=1)[0]
     return selected_rider
 
-def algorithm(K, all_orders, all_riders, dist_mat, problem_file, timelimit = 60):
+def algorithm(K, all_orders, all_riders, dist_mat, timelimit = 60):
     start_time = time.time()
 
     for r in all_riders:
