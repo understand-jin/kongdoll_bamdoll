@@ -3,7 +3,7 @@ import numpy as np
 
 def calculate_efficiencies(file_path):
     # JSON 파일 읽기
-    with open('C:\LG Algorithm\stage1_problems\STAGE1_3.json', 'r') as file:
+    with open(file_path, 'r') as file:
         data = json.load(file)
 
     # 데이터 변수 설정
