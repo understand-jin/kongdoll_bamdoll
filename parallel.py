@@ -144,7 +144,91 @@ def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
 
     return bundles, remaining_orders
 
+###########nearest_orders에서 5개 뽑아서 배달마감시간으로 정렬함#######################
+# def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
+#     bundles = []
+#     remaining_orders = orders[:]
+    
+#     while remaining_orders and rider.available_number > 0:
+#         current_order = remaining_orders.pop(0)
+#         current_bundle = [current_order]
+#         shop_seq = [current_order.id]
+#         delivery_seq = sorted(shop_seq, key=lambda order_id: all_orders[order_id].deadline)
+        
+#         is_feasible = test_route_feasibility(all_orders, rider, shop_seq, delivery_seq)
+#         if is_feasible != 0:
+#             remaining_orders.insert(0, current_order)
+#             return bundles, remaining_orders
+        
+#         current_volume = current_order.volume
+#         current_time = current_order.ready_time
 
+#         while True:
+#             nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, 30)
+#             added = False
+
+#             if len(current_bundle) >= 4:
+#                 break
+            
+#             i = 0
+#             while i < len(nearest_orders):
+#                 # 5개의 주문을 가져와서 배달 마감시간으로 정렬
+#                 subset_orders = nearest_orders[i:i + 5]
+#                 subset_orders.sort(key=lambda order: order.deadline)
+                
+#                 for next_order in subset_orders:
+#                     if current_volume + next_order.volume > rider.capa:
+#                         continue
+                    
+#                     current_bundle_ids = [o.id for o in current_bundle]
+#                     next_bundle_ids = [next_order.id]
+
+#                     combined_ids = current_bundle_ids + next_bundle_ids
+#                     pickup_permutations = itertools.permutations(combined_ids)
+
+#                     valid_combinations = []
+                    
+#                     for perm_shop_seq in pickup_permutations:
+#                         delivery_permutations = itertools.permutations(perm_shop_seq)
+#                         for perm_dlv_seq in delivery_permutations:
+#                             new_bundle = Bundle(all_orders, rider, list(perm_shop_seq), list(perm_dlv_seq), current_volume + next_order.volume, 0)
+#                             new_bundle.total_dist = get_total_distance(K, dist_mat, list(perm_shop_seq), list(perm_dlv_seq))
+#                             new_bundle.update_cost()
+
+#                             is_feasible = test_route_feasibility(all_orders, rider, list(perm_shop_seq), list(perm_dlv_seq))
+#                             if is_feasible == 0:
+#                                 valid_combinations.append((list(perm_shop_seq), list(perm_dlv_seq)))
+
+#                     if valid_combinations:
+#                         best_combination = min(valid_combinations, key=lambda x: get_total_distance(K, dist_mat, x[0], x[1]))
+#                         best_shop_seq, best_dlv_seq = best_combination
+
+#                         current_bundle.append(next_order)
+#                         current_volume += next_order.volume
+#                         current_time += rider.T[current_bundle[-2].id, next_order.id]
+#                         remaining_orders.remove(next_order)
+#                         added = True
+
+#                         # 선택된 best_shop_seq와 best_dlv_seq로 번들 갱신
+#                         shop_seq = best_shop_seq
+#                         delivery_seq = best_dlv_seq
+#                         break
+
+#                 if added:
+#                     break
+
+#                 i += 5
+
+#             if not added:
+#                 break
+
+#         final_bundle = Bundle(all_orders, rider, shop_seq, delivery_seq, current_volume, get_total_distance(K, dist_mat, shop_seq, delivery_seq))
+#         bundles.append(final_bundle)
+#         rider.available_number -= 1
+
+#     return bundles, remaining_orders
+
+####확률적으로 주는거(시간 오버됨) ###################################
 # def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
 #     bundles = []
 #     remaining_orders = orders[:]
@@ -249,12 +333,13 @@ def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
         r.T = np.round(dist_mat / r.speed + r.service_time)
 
     # 효율성 지표 (예시로 임의의 값 사용)
-    #effectiveness_indicator = [['bike', 100], ['car', 200], ['walk', 300]]
-    effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
+    effectiveness_indicator = [['bike', 100], ['car', 200], ['walk', 300]]
+    #effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
     effectiveness_dict = {rider.type: effectiveness for rider, effectiveness in zip(all_riders, effectiveness_indicator)}
 
     # 주문들을 ready_time 기준으로 정렬
-    sorted_orders = sorted(all_orders, key=lambda order: order.ready_time)
+    #sorted_orders = sorted(all_orders, key=lambda order: order.ready_time)
+    sorted_orders = random.sample(all_orders, len(all_orders))
 
     # 모든 라이더를 합쳐서 처리
     all_riders_list = all_riders
@@ -270,6 +355,7 @@ def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
 
     best_obj = sum((bundle.cost for bundle in all_bundles)) / K
     print(f'Initial best obj = {best_obj}')
+
 
     solution = [
         [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
