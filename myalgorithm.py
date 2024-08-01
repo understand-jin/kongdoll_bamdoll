@@ -174,76 +174,19 @@ def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
     return solution, best_obj
 
 
-# def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=61):
-#     with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
-#         futures = [executor.submit(single_run_algorithm, K, all_orders, all_riders, dist_mat, timelimit) for _ in range(num_processes)]
-#         results = [future.result() for future in concurrent.futures.as_completed(futures)]
+def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=61):
+    with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
+        futures = [executor.submit(single_run_algorithm, K, all_orders, all_riders, dist_mat, timelimit) for _ in range(num_processes)]
+        results = [future.result() for future in concurrent.futures.as_completed(futures)]
     
-#     # 각 프로세스의 목적함수 출력
-#     for i, result in enumerate(results):
-#         solution, obj_value = result
-#         print(f'Objective value from process {i+1}: {obj_value}')
+    # 각 프로세스의 목적함수 출력
+    for i, result in enumerate(results):
+        solution, obj_value = result
+        print(f'Objective value from process {i+1}: {obj_value}')
     
-#     # 최적의 solution 선택
-#     best_solution = min(results, key=lambda x: x[1])
-#     return best_solution[0]
-
-# def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=61):
-#     start_time = time.time()  # 시작 시간 기록
-#     best_solution = None
-#     best_obj_value = float('inf')  # 초기화할 때 무한대 값을 설정
-    
-#     def run_algorithm_with_timeout():
-#         nonlocal best_solution, best_obj_value
-#         with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
-#             futures = [executor.submit(single_run_algorithm, K, all_orders, all_riders, dist_mat, timelimit) for _ in range(num_processes)]
-#             try:
-#                 for future in concurrent.futures.as_completed(futures, timeout=timelimit - (time.time() - start_time)):
-#                     solution, obj_value = future.result()
-#                     print(f'Objective value from process: {obj_value}')
-#                     if obj_value < best_obj_value:
-#                         best_obj_value = obj_value
-#                         best_solution = solution
-#             except concurrent.futures.TimeoutError:
-#                 print("Time limit reached, returning the best solution found so far.")
-    
-#     run_algorithm_with_timeout()
-    
-#     return best_solution
-
-def local_search(all_bundles, dist_mat, all_orders, K, max_iter=100):
-    best_bundles = all_bundles[:]
-    best_obj = sum((bundle.cost for bundle in best_bundles)) / K
-
-    for _ in range(max_iter):
-        # 번들 중 두 개를 무작위로 선택하여 병합 시도
-        bundle1, bundle2 = random.sample(best_bundles, 2)
-        new_bundle = try_merging_bundles(K, dist_mat, all_orders, bundle1, bundle2)
-
-        if new_bundle is not None:
-            # 병합 성공 시 기존 번들 제거하고 새 번들 추가
-            best_bundles.remove(bundle1)
-            bundle1.rider.available_number += 1
-
-            best_bundles.remove(bundle2)
-            bundle2.rider.available_number += 1
-
-            best_bundles.append(new_bundle)
-            new_bundle.rider.available_number -= 1
-
-            cur_obj = sum((bundle.cost for bundle in best_bundles)) / K
-            if cur_obj < best_obj:
-                best_obj = cur_obj
-                print(f'Improved obj = {best_obj}')
-            else:
-                # 개선되지 않으면 번들 원상복구
-                best_bundles.remove(new_bundle)
-                best_bundles.append(bundle1)
-                bundle1.rider.available_number -= 1
-                best_bundles.append(bundle2)
-                bundle2.rider.available_number -= 1
-
-    return best_bundles, best_obj
+    # 최적의 solution 선택
+    best_solution = min(results, key=lambda x: x[1])
+    return best_solution[0]
 
 def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=61):
     start_time = time.time()  # 시작 시간 기록
@@ -265,15 +208,6 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=6
                 print("Time limit reached, returning the best solution found so far.")
     
     run_algorithm_with_timeout()
-
-    # local search를 통해 best_solution을 더 개선
-    improved_bundles, improved_obj = local_search(best_solution, dist_mat, all_orders, K)
-
-    improved_solution = [
-    [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
-    for bundle in improved_bundles
-]
-    print(f'Final obj after local search = {improved_obj}')
     
-    return improved_solution
+    return best_solution
 
