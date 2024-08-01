@@ -3,8 +3,7 @@ import time
 import itertools
 import random
 from itertools import permutations
-from util import Bundle, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
-import concurrent.futures
+from util import Bundle, select_two_bundles, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
 
 def calculate_efficiencies(K, all_riders, all_orders, dist_mat):
     # 모든 주문의 부피 평균 계산
@@ -38,7 +37,7 @@ def calculate_efficiencies(K, all_riders, all_orders, dist_mat):
     # 효율성 지표 반환
     return efficiencies
 
-def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_orders):
+def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_orders=30):
     bundle_size = len(current_bundle)
     
     distances = []
@@ -55,7 +54,9 @@ def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_order
     nearest_orders = [order for order, _ in distances[:num_orders]]
     return nearest_orders
 
-def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders, all_riders):
+
+
+def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
     bundles = []
     remaining_orders = orders[:]
     
@@ -74,7 +75,7 @@ def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders, all_riders):
         current_time = current_order.ready_time
 
         while True:
-            nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, 50)
+            nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, 30)
             added = False
 
             if len(current_bundle) >= 4:
@@ -133,19 +134,20 @@ def assign_riders_with_weighted_probability(riders, effectiveness_indicator):
     selected_rider = random.choices(riders, weights=weights, k=1)[0]
     return selected_rider
 
-
-
-def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
+def algorithm(K, all_orders, all_riders, dist_mat, timelimit = 60):
     start_time = time.time()
 
     for r in all_riders:
         r.T = np.round(dist_mat / r.speed + r.service_time)
 
-    # 효율성 지표 계산
-    effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
+    # 효율성 지표 (예시로 임의의 값 사용)
+    #effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
+    effectiveness_indicator = [['bike', 100], ['car', 200], ['walk', 300]]
+    #print(effectiveness_indicator)
+    effectiveness_dict = {rider.type: effectiveness for rider, effectiveness in zip(all_riders, effectiveness_indicator)}
 
-    # 주문들을 무작위로 섞어 정렬
-    sorted_orders = random.sample(all_orders, len(all_orders))
+    # 주문들을 ready_time 기준으로 정렬
+    sorted_orders = sorted(all_orders, key=lambda order: order.ready_time)
 
     # 모든 라이더를 합쳐서 처리
     all_riders_list = all_riders
@@ -155,125 +157,62 @@ def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
     while sorted_orders and all_riders_list:
         rider = assign_riders_with_weighted_probability(all_riders_list, effectiveness_indicator)
         if rider.available_number > 0:
-            bundles, sorted_orders = assign_orders_to_rider(rider, sorted_orders, dist_mat, K, all_orders, all_riders)
+            bundles, sorted_orders = assign_orders_to_rider(rider, sorted_orders, dist_mat, K, all_orders)
             for bundle in bundles:
                 all_bundles.append(bundle)
 
-    # 최적의 비용 계산
     best_obj = sum((bundle.cost for bundle in all_bundles)) / K
     print(f'Initial best obj = {best_obj}')
 
-    best_obj = sum((bundle.cost for bundle in all_bundles)) / K
-    print(f'Optimized obj after merging single-order bundles = {best_obj}')
+    while time.time() - start_time < timelimit:
+        iter = 0
+        max_merge_iter = 1000
+
+        while iter < max_merge_iter and time.time() - start_time < timelimit:
+            bundle1, bundle2 = select_two_bundles(all_bundles)
+            new_bundle = try_merging_bundles(K, dist_mat, all_orders, bundle1, bundle2)
+            if new_bundle is not None:
+                is_feasible = test_route_feasibility(all_orders, new_bundle.rider, new_bundle.shop_seq, new_bundle.dlv_seq)
+                if is_feasible == 0:
+                    all_bundles.remove(bundle1)
+                    bundle1.rider.available_number += 1
+
+                    all_bundles.remove(bundle2)
+                    bundle2.rider.available_number += 1
+
+                    all_bundles.append(new_bundle)
+                    new_bundle.rider.available_number -= 1
+
+                    cur_obj = sum((bundle.cost for bundle in all_bundles)) / K
+                    if cur_obj < best_obj:
+                        best_obj = cur_obj
+                        print(f'New best obj after merge = {best_obj}')
+            else:
+                iter += 1
+
+        for bundle in all_bundles:
+            new_rider = get_cheaper_available_riders(all_riders, bundle.rider)
+            if new_rider is not None and new_rider.available_number > 0:
+                old_rider = bundle.rider
+                temp_bundle = bundle
+                if try_bundle_rider_changing(all_orders, dist_mat, temp_bundle, new_rider):
+                    is_feasible = test_route_feasibility(all_orders, new_rider, temp_bundle.shop_seq, temp_bundle.dlv_seq)
+                    if is_feasible == 0:
+                        old_rider.available_number += 1
+                        new_rider.available_number -= 1
+                        bundle.rider = new_rider
+                        bundle.shop_seq = temp_bundle.shop_seq
+                        bundle.dlv_seq = temp_bundle.dlv_seq
+                        bundle.update_cost()
+
+        cur_obj = sum((bundle.cost for bundle in all_bundles)) / K
+        if cur_obj < best_obj:
+            best_obj = cur_obj
+            print(f'New best obj after rider reassignment = {best_obj}')
 
     solution = [
         [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
         for bundle in all_bundles
     ]
 
-    return solution, best_obj
-
-
-# def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=61):
-#     with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
-#         futures = [executor.submit(single_run_algorithm, K, all_orders, all_riders, dist_mat, timelimit) for _ in range(num_processes)]
-#         results = [future.result() for future in concurrent.futures.as_completed(futures)]
-    
-#     # 각 프로세스의 목적함수 출력
-#     for i, result in enumerate(results):
-#         solution, obj_value = result
-#         print(f'Objective value from process {i+1}: {obj_value}')
-    
-#     # 최적의 solution 선택
-#     best_solution = min(results, key=lambda x: x[1])
-#     return best_solution[0]
-
-# def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=61):
-#     start_time = time.time()  # 시작 시간 기록
-#     best_solution = None
-#     best_obj_value = float('inf')  # 초기화할 때 무한대 값을 설정
-    
-#     def run_algorithm_with_timeout():
-#         nonlocal best_solution, best_obj_value
-#         with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
-#             futures = [executor.submit(single_run_algorithm, K, all_orders, all_riders, dist_mat, timelimit) for _ in range(num_processes)]
-#             try:
-#                 for future in concurrent.futures.as_completed(futures, timeout=timelimit - (time.time() - start_time)):
-#                     solution, obj_value = future.result()
-#                     print(f'Objective value from process: {obj_value}')
-#                     if obj_value < best_obj_value:
-#                         best_obj_value = obj_value
-#                         best_solution = solution
-#             except concurrent.futures.TimeoutError:
-#                 print("Time limit reached, returning the best solution found so far.")
-    
-#     run_algorithm_with_timeout()
-    
-#     return best_solution
-
-def local_search(all_bundles, dist_mat, all_orders, K, max_iter=100):
-    best_bundles = all_bundles[:]
-    best_obj = sum((bundle.cost for bundle in best_bundles)) / K
-
-    for _ in range(max_iter):
-        # 번들 중 두 개를 무작위로 선택하여 병합 시도
-        bundle1, bundle2 = random.sample(best_bundles, 2)
-        new_bundle = try_merging_bundles(K, dist_mat, all_orders, bundle1, bundle2)
-
-        if new_bundle is not None:
-            # 병합 성공 시 기존 번들 제거하고 새 번들 추가
-            best_bundles.remove(bundle1)
-            bundle1.rider.available_number += 1
-
-            best_bundles.remove(bundle2)
-            bundle2.rider.available_number += 1
-
-            best_bundles.append(new_bundle)
-            new_bundle.rider.available_number -= 1
-
-            cur_obj = sum((bundle.cost for bundle in best_bundles)) / K
-            if cur_obj < best_obj:
-                best_obj = cur_obj
-                print(f'Improved obj = {best_obj}')
-            else:
-                # 개선되지 않으면 번들 원상복구
-                best_bundles.remove(new_bundle)
-                best_bundles.append(bundle1)
-                bundle1.rider.available_number -= 1
-                best_bundles.append(bundle2)
-                bundle2.rider.available_number -= 1
-
-    return best_bundles, best_obj
-
-def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=61):
-    start_time = time.time()  # 시작 시간 기록
-    best_solution = None
-    best_obj_value = float('inf')  # 초기화할 때 무한대 값을 설정
-    
-    def run_algorithm_with_timeout():
-        nonlocal best_solution, best_obj_value
-        with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
-            futures = [executor.submit(single_run_algorithm, K, all_orders, all_riders, dist_mat, timelimit) for _ in range(num_processes)]
-            try:
-                for future in concurrent.futures.as_completed(futures, timeout=timelimit - (time.time() - start_time)):
-                    solution, obj_value = future.result()
-                    print(f'Objective value from process: {obj_value}')
-                    if obj_value < best_obj_value:
-                        best_obj_value = obj_value
-                        best_solution = solution
-            except concurrent.futures.TimeoutError:
-                print("Time limit reached, returning the best solution found so far.")
-    
-    run_algorithm_with_timeout()
-
-    # local search를 통해 best_solution을 더 개선
-    improved_bundles, improved_obj = local_search(best_solution, dist_mat, all_orders, K)
-
-    improved_solution = [
-    [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
-    for bundle in improved_bundles
-]
-    print(f'Final obj after local search = {improved_obj}')
-    
-    return improved_solution
-
+    return solution
