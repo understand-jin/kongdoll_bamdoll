@@ -3,46 +3,42 @@ import time
 import itertools
 import random
 from itertools import permutations
-from util import Bundle, try_merging_bundles, get_total_distance, test_route_feasibility
+from util import Bundle, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
 import concurrent.futures
 
-def normalize(values):
-    min_val = min(values)
-    max_val = max(values)
-    if max_val == min_val:
-        return [1] * len(values)
-    return [(val - min_val) / (max_val - min_val) for val in values]
+def calculate_efficiencies(K, all_riders, all_orders, dist_mat):
+    # 모든 주문의 부피 평균 계산
+    order_volumes = [order.volume for order in all_orders]
+    avg_volume = np.mean(order_volumes)
 
-def select_rider_based_on_criteria(riders, all_orders, sorted_orders, dist_mat, K):
-    weights = []
-    for rider in riders:
-        if rider.type == 'bike':
-            ready_times = [order.ready_time for order in sorted_orders[:10]]
-            norm_ready_times = normalize(ready_times)
-            weight = 1 / rider.var_cost + sum(1 / t for t in norm_ready_times)
-        elif rider.type == 'walk':
-            distances = [dist_mat[order.id, order.id + K] for order in sorted_orders[:10]]
-            norm_distances = normalize(distances)
-            weight = 1 / rider.var_cost + sum(d for d in norm_distances)
-        elif rider.type == 'car':
-            volumes = [order.volume for order in sorted_orders[:10]]
-            norm_volumes = normalize(volumes)
-            weight = 1 / rider.var_cost + sum(v for v in norm_volumes)
-        else:
-            weight = 1 / rider.var_cost
+    # d1, d2, d3 계산
+    d1 = np.sum(dist_mat[:K, :K]) / 2500
+    d2 = np.sum(dist_mat[:K, K:2*K]) / 2500
+    d3 = np.sum(dist_mat[K:2*K, K:2*K]) / 2500
 
-        weights.append(weight)
-    
-    total_weight = sum(weights)
-    probabilities = [weight / total_weight for weight in weights]
-    
-    # 상위 N개 라이더 중 무작위로 선택
-    N = 100
-    top_riders_indices = sorted(range(len(riders)), key=lambda i: probabilities[i], reverse=True)[:N]
-    selected_index = random.choice(top_riders_indices)
-    return riders[selected_index]
+    # 각 배달원의 효율성 지표 계산 함수
+    def calculate_efficiency(rider, avg_volume, d1, d2, d3):
+        capacity = rider.capa
+        variable_cost = rider.var_cost
+        fixed_cost = rider.fixed_cost
+        
+        Ri = (0.8 * capacity) / avg_volume
+        Xi = (Ri - 1) * d1 + (Ri - 1) * d3 + d2
+        efficiency = fixed_cost + (Xi / 100) * variable_cost
+        
+        return efficiency
 
-def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_orders=30):
+    # 각 배달원의 효율성 지표 계산
+    efficiencies = []
+    for rider in all_riders:
+        rider_type = rider.type
+        efficiency = calculate_efficiency(rider, avg_volume, d1, d2, d3)
+        efficiencies.append([rider_type, efficiency])
+
+    # 효율성 지표 반환
+    return efficiencies
+
+def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_orders):
     bundle_size = len(current_bundle)
     
     distances = []
@@ -59,7 +55,7 @@ def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_order
     nearest_orders = [order for order, _ in distances[:num_orders]]
     return nearest_orders
 
-def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
+def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders, all_riders):
     bundles = []
     remaining_orders = orders[:]
     
@@ -78,7 +74,7 @@ def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
         current_time = current_order.ready_time
 
         while True:
-            nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, 30)
+            nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, 50)
             added = False
 
             if len(current_bundle) >= 4:
@@ -131,32 +127,44 @@ def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
 
     return bundles, remaining_orders
 
+def assign_riders_with_weighted_probability(riders, effectiveness_indicator):
+    total_effectiveness = sum([indicator[1] for indicator in effectiveness_indicator])
+    weights = [total_effectiveness / indicator[1] for indicator in effectiveness_indicator]
+    selected_rider = random.choices(riders, weights=weights, k=1)[0]
+    return selected_rider
+
+
+
 def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
     start_time = time.time()
 
     for r in all_riders:
         r.T = np.round(dist_mat / r.speed + r.service_time)
 
-    # 주문들을 ready_time 기준으로 정렬
+    # 효율성 지표 계산
+    effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
+
+    # 주문들을 무작위로 섞어 정렬
     sorted_orders = random.sample(all_orders, len(all_orders))
 
     # 모든 라이더를 합쳐서 처리
     all_riders_list = all_riders
-    print(all_riders_list)
 
     all_bundles = []
 
     while sorted_orders and all_riders_list:
-        rider = select_rider_based_on_criteria(all_riders_list, all_orders, sorted_orders, dist_mat, K)
+        rider = assign_riders_with_weighted_probability(all_riders_list, effectiveness_indicator)
         if rider.available_number > 0:
-            bundles, sorted_orders = assign_orders_to_rider(rider, sorted_orders, dist_mat, K, all_orders)
+            bundles, sorted_orders = assign_orders_to_rider(rider, sorted_orders, dist_mat, K, all_orders, all_riders)
             for bundle in bundles:
                 all_bundles.append(bundle)
 
-
+    # 최적의 비용 계산
     best_obj = sum((bundle.cost for bundle in all_bundles)) / K
     print(f'Initial best obj = {best_obj}')
 
+    best_obj = sum((bundle.cost for bundle in all_bundles)) / K
+    print(f'Optimized obj after merging single-order bundles = {best_obj}')
 
     solution = [
         [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
@@ -164,6 +172,7 @@ def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
     ]
 
     return solution, best_obj
+
 
 def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=61):
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
@@ -178,3 +187,27 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=6
     # 최적의 solution 선택
     best_solution = min(results, key=lambda x: x[1])
     return best_solution[0]
+
+def algorithm(K, all_orders, all_riders, dist_mat, timelimit=55, num_processes=61):
+    start_time = time.time()  # 시작 시간 기록
+    best_solution = None
+    best_obj_value = float('inf')  # 초기화할 때 무한대 값을 설정
+    
+    def run_algorithm_with_timeout():
+        nonlocal best_solution, best_obj_value
+        with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
+            futures = [executor.submit(single_run_algorithm, K, all_orders, all_riders, dist_mat, timelimit) for _ in range(num_processes)]
+            try:
+                for future in concurrent.futures.as_completed(futures, timeout=timelimit - (time.time() - start_time)):
+                    solution, obj_value = future.result()
+                    print(f'Objective value from process: {obj_value}')
+                    if obj_value < best_obj_value:
+                        best_obj_value = obj_value
+                        best_solution = solution
+            except concurrent.futures.TimeoutError:
+                print("Time limit reached, returning the best solution found so far.")
+    
+    run_algorithm_with_timeout()
+    
+    return best_solution
+
