@@ -337,39 +337,39 @@ def optimize_single_order_bundles(best_solution, all_orders, all_riders, dist_ma
 
 
 
-def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
-    start_time = time.time()
+# def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
+#     start_time = time.time()
 
-    for r in all_riders:
-        r.T = np.round(dist_mat / r.speed + r.service_time)
+#     for r in all_riders:
+#         r.T = np.round(dist_mat / r.speed + r.service_time)
 
-    # 효율성 지표 계산
-    effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
-    effectiveness_dict = {rider.type: effectiveness for rider, effectiveness in zip(all_riders, effectiveness_indicator)}
+#     # 효율성 지표 계산
+#     effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
+#     effectiveness_dict = {rider.type: effectiveness for rider, effectiveness in zip(all_riders, effectiveness_indicator)}
 
-    # 주문들을 무작위로 섞기
-    sorted_orders = random.sample(all_orders, len(all_orders))
+#     # 주문들을 무작위로 섞기
+#     sorted_orders = random.sample(all_orders, len(all_orders))
 
-    all_bundles = []
+#     all_bundles = []
 
-    all_riders_list = all_riders
+#     all_riders_list = all_riders
 
-    # while sorted_orders:
-    #     # 라이더와 주문 할당
-    #     bundles, sorted_orders = assign_orders_to_rider(all_riders, effectiveness_indicator, sorted_orders, dist_mat, K, all_orders)
-    #     all_bundles.extend(bundles)
+#     # while sorted_orders:
+#     #     # 라이더와 주문 할당
+#     #     bundles, sorted_orders = assign_orders_to_rider(all_riders, effectiveness_indicator, sorted_orders, dist_mat, K, all_orders)
+#     #     all_bundles.extend(bundles)
 
-    while sorted_orders and all_riders_list:
-        rider = assign_riders_with_weighted_probability(all_riders_list, effectiveness_indicator)
-        if rider.available_number > 0:
-            bundles, sorted_orders = assign_orders_to_rider(rider, sorted_orders, dist_mat, K, all_orders)
-            for bundle in bundles:
-                all_bundles.append(bundle)
+#     while sorted_orders and all_riders_list:
+#         rider = assign_riders_with_weighted_probability(all_riders_list, effectiveness_indicator)
+#         if rider.available_number > 0:
+#             bundles, sorted_orders = assign_orders_to_rider(rider, sorted_orders, dist_mat, K, all_orders)
+#             for bundle in bundles:
+#                 all_bundles.append(bundle)
 
-    best_obj = sum((bundle.cost for bundle in all_bundles)) / K
-    print(f'Initial best obj = {best_obj}')
+#     best_obj = sum((bundle.cost for bundle in all_bundles)) / K
+#     print(f'Initial best obj = {best_obj}')
 
-    return all_bundles, best_obj
+#     return all_bundles, best_obj
 
 def count_riders_by_type(best_solution):
     rider_count = {
@@ -487,5 +487,241 @@ def calculate_average_cost(solution, all_orders, all_riders, dist_mat, K):
         total_cost += cost
     average_cost = total_cost / K
     return average_cost
+
+def weighted_random_choice(riders, weights):
+    total = sum(weights)
+    cumulative_weights = [sum(weights[:i+1]) for i in range(len(weights))]
+    r = random.uniform(0, total)
+    for rider, cumulative_weight in zip(riders, cumulative_weights):
+        if r < cumulative_weight:
+            return rider
+
+def get_rider_weights(riders):
+    weights = []
+    for rider in riders:
+        if rider.type == '도보':
+            weights.append(1)  # 도보 라이더 가중치
+        elif rider.type == '바이크':
+            weights.append(2)  # 바이크 라이더 가중치
+        else:
+            weights.append(3)  # 자동차 라이더 가중치
+    return weights
+
+def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_orders=30):
+    bundle_size = len(current_bundle)
+    
+    distances = []
+    for order in remaining_orders:
+        total_distance = 0
+        for existing_order in current_bundle:
+            pickup_distance = dist_mat[existing_order.id, order.id]
+            delivery_distance = dist_mat[existing_order.id + K, order.id + K]
+            total_distance += (pickup_distance + delivery_distance)
+        
+        last_pickup_to_first_delivery = dist_mat[current_bundle[-1].id, order.id + K]
+        new_delivery_distance = dist_mat[order.id + K, order.id + K]
+        
+        average_distance = (total_distance + last_pickup_to_first_delivery + new_delivery_distance) / (bundle_size + 1)
+        distances.append((order, average_distance))
+    
+    distances.sort(key=lambda x: x[1])
+    nearest_orders = [order for order, _ in distances[:num_orders]]
+    return nearest_orders
+
+def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
+    bundles = []
+    remaining_orders = orders[:]
+    
+    while remaining_orders and rider.available_number > 0:
+        current_order = remaining_orders.pop(0)
+        current_bundle = [current_order]
+        shop_seq = [current_order.id]
+        delivery_seq = sorted(shop_seq, key=lambda order_id: all_orders[order_id].deadline)
+        
+        is_feasible = test_route_feasibility(all_orders, rider, shop_seq, delivery_seq)
+        if is_feasible != 0:
+            remaining_orders.insert(0, current_order)
+            return bundles, remaining_orders
+        
+        current_total_volume = current_order.volume
+        current_time = current_order.ready_time
+
+        while True:
+            nearest_orders = find_nearest_orders(current_bundle, remaining_orders, dist_mat, K)
+            added = False
+
+            if len(current_bundle) >= 4:
+                break
+            
+            for next_order in nearest_orders:
+                if current_total_volume + next_order.volume > rider.capa:
+                    continue
+                
+                current_bundle_ids = [o.id for o in current_bundle]
+                next_bundle_ids = [next_order.id]
+
+                combined_ids = current_bundle_ids + next_bundle_ids
+                pickup_permutations = itertools.permutations(combined_ids)
+
+                valid_combinations = []
+                
+                for perm_shop_seq in pickup_permutations:
+                    delivery_permutations = itertools.permutations(perm_shop_seq)
+                    for perm_dlv_seq in delivery_permutations:
+                        new_bundle = Bundle(all_orders, rider, list(perm_shop_seq), list(perm_dlv_seq), current_total_volume + next_order.volume, 0)
+                        new_bundle.total_dist = get_total_distance(K, dist_mat, list(perm_shop_seq), list(perm_dlv_seq))
+                        new_bundle.update_cost()
+
+                        is_feasible = test_route_feasibility(all_orders, rider, list(perm_shop_seq), list(perm_dlv_seq))
+                        if is_feasible == 0:
+                            valid_combinations.append((list(perm_shop_seq), list(perm_dlv_seq)))
+
+                if valid_combinations:
+                    best_combination = min(valid_combinations, key=lambda x: get_total_distance(K, dist_mat, x[0], x[1]))
+                    best_shop_seq, best_dlv_seq = best_combination
+
+                    current_bundle.append(next_order)
+                    current_total_volume += next_order.volume
+                    current_time += rider.T[current_bundle[-2].id, next_order.id]
+                    remaining_orders.remove(next_order)
+                    added = True
+
+                    # 선택된 best_shop_seq와 best_dlv_seq로 번들 갱신
+                    shop_seq = best_shop_seq
+                    delivery_seq = best_dlv_seq
+                    break
+
+            if not added:
+                break
+
+        final_bundle = Bundle(all_orders, rider, shop_seq, delivery_seq, current_total_volume, get_total_distance(K, dist_mat, shop_seq, delivery_seq))
+        bundles.append(final_bundle)
+        rider.available_number -= 1
+
+    return bundles, remaining_orders
+
+def reassign_riders_to_bundles(bundles, all_riders, all_orders, dist_mat, K):
+    for bundle in bundles:
+        best_cost = float('inf')
+        best_rider = None
+        best_shop_seq = None
+        best_dlv_seq = None
+
+        # 최적의 라이더와 비용을 찾습니다.
+        for rider in all_riders:
+            if bundle.total_volume <= rider.capa:
+                permuted_sequences = itertools.permutations(bundle.shop_seq)
+                for shop_seq in permuted_sequences:
+                    for dlv_seq in itertools.permutations(shop_seq):
+                        if test_route_feasibility(all_orders, rider, shop_seq, dlv_seq) == 0:
+                            total_distance = get_total_distance(K, dist_mat, shop_seq, dlv_seq)
+                            total_cost = rider.fixed_cost + (total_distance / 100.0) * rider.var_cost
+                            if total_cost < best_cost:
+                                best_cost = total_cost
+                                best_rider = rider
+                                best_shop_seq = list(shop_seq)
+                                best_dlv_seq = list(dlv_seq)
+
+        # 최적의 라이더의 가용수가 없을 경우 처리
+        if best_rider:
+            if best_rider.available_number <= 0:
+                # 현재 최적의 라이더가 처리한 번들 중에서 현재 번들보다 비용이 큰 번들을 찾습니다.
+                current_rider_bundles = [b for b in bundles if b.rider == best_rider]
+                expensive_bundles = [b for b in current_rider_bundles if b.cost > best_cost]
+                
+                # 가장 비용이 높은 번들부터 다른 라이더로 변경하려고 시도합니다.
+                expensive_bundles.sort(key=lambda b: b.cost, reverse=True)
+                
+                for exp_bundle in expensive_bundles:
+                    if exp_bundle == bundle:
+                        continue  # 현재 번들은 제외
+                    
+                    # 새로운 라이더로 변경 시도
+                    new_best_cost = float('inf')
+                    new_best_rider = None
+                    new_best_shop_seq = None
+                    new_best_dlv_seq = None
+                    
+                    for rider in all_riders:
+                        if rider.available_number > 0 and exp_bundle.total_volume <= rider.capa:
+                            permuted_sequences = itertools.permutations(exp_bundle.shop_seq)
+                            for shop_seq in permuted_sequences:
+                                for dlv_seq in itertools.permutations(shop_seq):
+                                    if test_route_feasibility(all_orders, rider, shop_seq, dlv_seq) == 0:
+                                        total_distance = get_total_distance(K, dist_mat, shop_seq, dlv_seq)
+                                        total_cost = rider.fixed_cost + (total_distance / 100.0) * rider.var_cost
+                                        if total_cost < new_best_cost:
+                                            new_best_cost = total_cost
+                                            new_best_rider = rider
+                                            new_best_shop_seq = list(shop_seq)
+                                            new_best_dlv_seq = list(dlv_seq)
+                    if new_best_rider:
+                        # 번들을 새로운 라이더로 변경
+                        exp_bundle.rider = new_best_rider
+                        exp_bundle.shop_seq = new_best_shop_seq
+                        exp_bundle.dlv_seq = new_best_dlv_seq
+                        exp_bundle.total_dist = get_total_distance(K, dist_mat, new_best_shop_seq, new_best_dlv_seq)
+                        exp_bundle.update_cost()
+                        new_best_rider.available_number -= 1
+                        # 변경이 성공적으로 이루어진 후, 최적의 라이더를 현재 번들에 할당
+                        bundle.rider = best_rider
+                        bundle.shop_seq = best_shop_seq
+                        bundle.dlv_seq = best_dlv_seq
+                        bundle.total_dist = get_total_distance(K, dist_mat, best_shop_seq, best_dlv_seq)
+                        bundle.update_cost()
+                        best_rider.available_number -= 1
+                        break  # 번들 할당이 완료되면 더 이상의 번들 변경은 필요 없음
+            else:
+                # 최적의 라이더가 가용한 경우, 현재 번들에 할당
+                bundle.rider = best_rider
+                bundle.shop_seq = best_shop_seq
+                bundle.dlv_seq = best_dlv_seq
+                bundle.total_dist = get_total_distance(K, dist_mat, best_shop_seq, best_dlv_seq)
+                bundle.update_cost()
+                best_rider.available_number -= 1
+
+
+def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
+    start_time = time.time()
+
+    for r in all_riders:
+        r.T = np.round(dist_mat / r.speed + r.service_time)
+
+    sorted_orders = random.sample(all_orders, len(all_orders))
+    all_riders_list = all_riders
+    all_bundles = []
+
+    while sorted_orders and all_riders_list:
+        weights = get_rider_weights(all_riders_list)
+        rider = weighted_random_choice(all_riders_list, weights)
+        
+        if rider.available_number > 0:
+            bundles, sorted_orders = assign_orders_to_rider(rider, sorted_orders, dist_mat, K, all_orders)
+            for bundle in bundles:
+                all_bundles.append(bundle)
+
+    reassign_riders_to_bundles(all_bundles, all_riders, all_orders, dist_mat, K)
+
+    best_obj = sum((bundle.cost for bundle in all_bundles)) / K
+    print(f'Initial best obj = {best_obj}')
+
+    # solution = [
+    #     [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
+    #     for bundle in all_bundles
+    # ]
+
+    return all_bundles, best_obj
+
+# def algorithm2(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=30):
+#     with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
+#         futures = [executor.submit(single_run_algorithm, K, all_orders, all_riders, dist_mat, timelimit) for _ in range(num_processes)]
+#         results = [future.result() for future in concurrent.futures.as_completed(futures)]
+    
+#     for i, result in enumerate(results):
+#         solution, obj_value = result
+#         print(f'Objective value from process {i+1}: {obj_value}')
+    
+#     best_solution = min(results, key=lambda x: x[1])
+#     return best_solution[0]
 
 
