@@ -3,7 +3,7 @@ import time
 import itertools
 import random
 from itertools import permutations
-from util import Bundle, select_two_bundles, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
+from util import Bundle, solution_check, select_two_bundles, try_merging_bundles, get_total_distance, get_total_volume, test_route_feasibility, get_cheaper_available_riders, try_bundle_rider_changing
 import concurrent.futures
 
 def calculate_efficiencies(K, all_riders, all_orders, dist_mat):
@@ -55,10 +55,16 @@ def find_nearest_orders(current_bundle, remaining_orders, dist_mat, K, num_order
     nearest_orders = [order for order, _ in distances[:num_orders]]
     return nearest_orders
 
-def assign_orders_to_rider(rider, orders, dist_mat, K, all_orders):
+def assign_orders_to_rider(all_riders_list, effectiveness_indicator, sorted_orders, dist_mat, K, all_orders):
     bundles = []
-    remaining_orders = orders[:]
+    remaining_orders = sorted_orders[:]
     
+    # 유효한 라이더를 선택할 때까지 반복
+    while True:
+        rider = assign_riders_with_weighted_probability(all_riders_list, effectiveness_indicator)
+        if rider.available_number > 0:
+            break
+
     while remaining_orders and rider.available_number > 0:
         current_order = remaining_orders.pop(0)
         current_bundle = [current_order]
@@ -135,23 +141,17 @@ def assign_riders_with_weighted_probability(riders, effectiveness_indicator):
     selected_rider = random.choices(riders, weights=weights, k=1)[0]
     return selected_rider
 
-
 def assign_orders_to_rider2(all_riders_list, effectiveness_indicator, sorted_orders, dist_mat, K, all_orders):
     bundles = []
     remaining_orders = sorted_orders[:]
-    
-    # 라이더 타입별 사용된 수를 추적하기 위한 딕셔너리 초기화
-    used_riders = {rider.type: 0 for rider in all_riders_list}
     
     while remaining_orders:
         # 유효한 라이더를 선택할 때까지 반복
         while True:
             rider = assign_riders_with_weighted_probability(all_riders_list, effectiveness_indicator)
             if rider.available_number > 0:
-                rider.available_number -= 1  # 라이더 사용 시 available_number 감소
-                used_riders[rider.type] += 1  # 선택된 라이더 타입의 사용된 수를 증가
                 break
-        
+
         current_order = remaining_orders.pop(0)
         current_bundle = [current_order]
         shop_seq = [current_order.id]
@@ -161,18 +161,12 @@ def assign_orders_to_rider2(all_riders_list, effectiveness_indicator, sorted_ord
         while True:
             is_feasible = test_route_feasibility(all_orders, rider, shop_seq, delivery_seq)
             if is_feasible == 0:
-                break  # 유효한 라이더를 찾았으면 루프 종료
+                break  # 유효한 라이더가 찾았으면 루프 종료
             else:
-                # 유효하지 않은 라이더의 available_number 복원
-                rider.available_number += 1
-                used_riders[rider.type] -= 1  # 사용된 라이더 수 감소
-                
-                # 다른 라이더를 다시 시도
+                # 유효하지 않은 라이더는 다시 시도
                 while True:
                     rider = assign_riders_with_weighted_probability(all_riders_list, effectiveness_indicator)
                     if rider.available_number > 0:
-                        rider.available_number -= 1  # 라이더 사용 시 available_number 감소
-                        used_riders[rider.type] += 1  # 사용된 라이더 수 증가
                         break
 
         # 유효한 라이더가 할당되면 나머지 번들 과정을 진행
@@ -229,11 +223,9 @@ def assign_orders_to_rider2(all_riders_list, effectiveness_indicator, sorted_ord
 
         final_bundle = Bundle(all_orders, rider, shop_seq, delivery_seq, current_volume, get_total_distance(K, dist_mat, shop_seq, delivery_seq))
         bundles.append(final_bundle)
+        rider.available_number -= 1
 
-    # 사용된 라이더의 수를 따로 반환
-    return bundles, remaining_orders, used_riders
-
-
+    return bundles, remaining_orders
 
 
 def optimize_single_order_bundles(best_solution, all_orders, all_riders, dist_mat, K, max_nearest_bundles=5):
@@ -249,61 +241,54 @@ def optimize_single_order_bundles(best_solution, all_orders, all_riders, dist_ma
         nearest_order_ids = [order.id for order in nearest_orders]
 
         # 이 주문들이 들어가 있는 번들들 찾기
-        associated_bundles = set()
+        associated_bundles = set()  # 중복을 피하기 위해 set 사용
         for order_id in nearest_order_ids:
-            for bundle in remaining_solution:
+            for bundle in remaining_solution:  # 남아 있는 솔루션에서 번들 찾기
                 if order_id in bundle.shop_seq:
                     associated_bundles.add(bundle)
                     break
 
         # nearest_order_ids 중 번들에 포함되지 않은 주문이 있는지 확인
         missing_orders = set(nearest_order_ids) - {order_id for bundle in associated_bundles for order_id in bundle.shop_seq}
+
+        # 모든 주문이 포함된 번들을 찾지 못한 경우 추가로 검색
         for order_id in missing_orders:
             for bundle in best_solution:
                 if order_id in bundle.shop_seq:
                     associated_bundles.add(bundle)
                     break
 
-        # 현재 번들과 찾은 번들을 합침
-        candidate_bundles = list(associated_bundles)
+        # 현재 번들과 찾은 번들을 합침 (단, single_bundle이 이미 associated_bundles에 있을 경우 제외)
+        candidate_bundles = list(associated_bundles)  # set을 list로 변환
+        if single_bundle not in associated_bundles:
+            candidate_bundles.append(single_bundle)
 
-        # candidate_bundles의 rider 객체를 all_riders 리스트에서 찾아 업데이트
-        print(f"candidate_bundles : {candidate_bundles}")
         for bundle in candidate_bundles:
-            for rider in all_riders:
-                if rider.type == bundle.rider.type:
-                    print(f"before : {rider.available_number}")
-                    rider.available_number += 1
-                    print(f"after : {rider.available_number}")
+            bundle.rider.available_number += 1
 
-        candidate_order_ids = list(set(order_id for bundle in candidate_bundles for order_id in bundle.shop_seq))
+        candidate_order_ids = list(set(order_id for bundle in candidate_bundles for order_id in bundle.shop_seq))  # 중복 제거
 
         # best_solution에서 candidate_bundles에 있는 번들을 제거
-        remaining_solution = [
-            bundle for bundle in remaining_solution 
-            if not any(order_id in bundle.shop_seq for order_id in candidate_order_ids)
-        ]
+        remaining_solution = [bundle for bundle in remaining_solution if bundle not in candidate_bundles]
 
-        # 모든 가용 가능한 라이더를 대상으로 효율성 계산
-        effectiveness_indicator = calculate_efficiencies(K, all_riders, all_orders, dist_mat)
+        # candidate_bundles에서 사용 중인 라이더들만 필터링
+        involved_riders = {bundle.rider for bundle in candidate_bundles}
 
+        # 주문들을 처리할 라이더와 할당된 주문들을 기반으로 번들 생성
+        effectiveness_indicator = calculate_efficiencies(K, involved_riders, all_orders, dist_mat)
+        
         # 모든 새로운 번들을 저장할 리스트
         all_new_bundles = []
 
-        # candidate_order_ids가 비워질 때까지 assign_orders_to_rider2 반복 호출
+        # candidate_order_ids가 비워질 때까지 assign_orders_to_rider 반복 호출
         while candidate_order_ids:
-            print(f"all_riders : {all_riders}")
-            new_bundles, remaining_orders, used_riders = assign_orders_to_rider2(all_riders, effectiveness_indicator, [all_orders[i] for i in candidate_order_ids], dist_mat, K, all_orders)
-            all_new_bundles.extend(new_bundles)
+            print(f"candidate_order_ids : {candidate_order_ids}")
+            new_bundles, remaining_orders = assign_orders_to_rider2(list(involved_riders), effectiveness_indicator, [all_orders[i] for i in candidate_order_ids], dist_mat, K, all_orders)
+            print(f"new_bundles : {new_bundles}")
+            print(f"remaining_order : {remaining_orders}")
 
-            # 사용된 라이더의 available_number 감소
-            # for rider_type, count in used_riders.items():
-            #     for rider in all_riders:
-            #         if rider.type == rider_type:
-            #             rider.available_number -= count
-            print(f"new_bundles : {all_new_bundles}")
-            print(f"used_riders : {used_riders}")
-            print(f"adjusted used_riders : {all_riders}")
+            # new_bundles을 임시 리스트에 추가
+            all_new_bundles.extend(new_bundles)
 
             # remaining_orders가 있는 경우, candidate_order_ids를 갱신
             if remaining_orders:
@@ -314,13 +299,6 @@ def optimize_single_order_bundles(best_solution, all_orders, all_riders, dist_ma
         # 모든 새로운 번들이 생성된 후 기존 번들들과 비용 비교
         existing_total_cost = sum(bundle.cost for bundle in candidate_bundles)
         new_total_cost = sum(bundle.cost for bundle in all_new_bundles)
-        print(f"final_new_bundles : {new_bundles}")
-        check2 = [
-        [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
-        for bundle in remaining_solution
-    ]
-
-        print(f"remaining_solution final :  {check2}")
 
         if new_total_cost < existing_total_cost:
             remaining_solution.extend(all_new_bundles)
@@ -329,6 +307,8 @@ def optimize_single_order_bundles(best_solution, all_orders, all_riders, dist_ma
 
     # 최종 솔루션으로 업데이트
     final_solution = remaining_solution
+
+    # 최종 솔루션의 목적함수 계산 (총 비용)
     final_solution_cost = sum(bundle.cost for bundle in final_solution)
 
     return final_solution
@@ -352,39 +332,42 @@ def single_run_algorithm(K, all_orders, all_riders, dist_mat, timelimit=60):
 
     all_bundles = []
 
-    all_riders_list = all_riders
-
-    # while sorted_orders:
-    #     # 라이더와 주문 할당
-    #     bundles, sorted_orders = assign_orders_to_rider(all_riders, effectiveness_indicator, sorted_orders, dist_mat, K, all_orders)
-    #     all_bundles.extend(bundles)
-
-    while sorted_orders and all_riders_list:
-        rider = assign_riders_with_weighted_probability(all_riders_list, effectiveness_indicator)
-        if rider.available_number > 0:
-            bundles, sorted_orders = assign_orders_to_rider(rider, sorted_orders, dist_mat, K, all_orders)
-            for bundle in bundles:
-                all_bundles.append(bundle)
+    while sorted_orders:
+        # 라이더와 주문 할당
+        bundles, sorted_orders = assign_orders_to_rider(all_riders, effectiveness_indicator, sorted_orders, dist_mat, K, all_orders)
+        all_bundles.extend(bundles)
 
     best_obj = sum((bundle.cost for bundle in all_bundles)) / K
     print(f'Initial best obj = {best_obj}')
 
     return all_bundles, best_obj
 
-def count_riders_by_type(best_solution):
-    rider_count = {
-        'BIKE': 0,
-        'WALK': 0,
-        'CAR': 0
-    }
-    
-    for bundle in best_solution:
-        rider_type = bundle.rider.type
-        if rider_type in rider_count:
-            rider_count[rider_type] += 1
-    
-    return rider_count
 
+# def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=30):
+#     with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
+#         futures = [executor.submit(single_run_algorithm, K, all_orders, all_riders, dist_mat, timelimit) for _ in range(num_processes)]
+#         results = [future.result() for future in concurrent.futures.as_completed(futures)]
+
+#     # 각 프로세스의 목적함수 출력
+#     for i, result in enumerate(results):
+#         solution, obj_value = result
+#         print(f'Objective value from process {i+1}: {obj_value}')
+
+#     # 최적의 solution 선택
+#     best_solution, best_obj_value = min(results, key=lambda x: x[1])
+#     print(f"Best solution objective value: {best_obj_value}")
+#     print(f"Best solution: {best_solution}")
+
+#     # 단일 주문 번들을 최적화
+#     optimized_solution = optimize_single_order_bundles(best_solution, all_orders, all_riders, dist_mat, K)
+
+#     # 최종 solution 출력 형식으로 변환
+#     final_solution = [
+#         [bundle.rider.type, bundle.shop_seq, bundle.dlv_seq]
+#         for bundle in optimized_solution
+#     ]
+
+#     return final_solution
 
 def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=30):
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
@@ -436,7 +419,6 @@ def algorithm(K, all_orders, all_riders, dist_mat, timelimit=60, num_processes=3
 def is_solution_feasible(K, all_orders, all_riders, solution):
     rider_usage = {rider.type: 0 for rider in all_riders}
     assigned_orders = set()
-    infeasibility = None
 
     for bundle in solution:
         rider_type, shop_seq, dlv_seq = bundle.rider.type, bundle.shop_seq, bundle.dlv_seq
@@ -447,36 +429,22 @@ def is_solution_feasible(K, all_orders, all_riders, solution):
         # 주어진 라이더 수를 초과하는지 확인
         rider = next(r for r in all_riders if r.type == rider_type)
         if rider_usage[rider_type] > rider.available_number:
-            infeasibility = f'The number of used riders of type {rider_type} exceeds the given available limit!'
-            break
+            print(f"Infeasibility: Too many {rider_type} riders used.")
+            return False
 
         # 주문이 중복되었거나 누락되었는지 확인
         for order_id in dlv_seq:
             if order_id in assigned_orders:
-                infeasibility = f"Order {order_id} is assigned more than once."
-                break
+                print(f"Infeasibility: Order {order_id} is assigned more than once.")
+                return False
             assigned_orders.add(order_id)
-        
-        if infeasibility:
-            break
 
     # 모든 주문이 정확히 한 번씩 할당되었는지 확인
-    if infeasibility is None and len(assigned_orders) != K:
-        infeasibility = "Not all orders are assigned."
-
-    # 원래 all_riders의 available_number와 optimized_solution에 주문을 할당받은 라이더들의 수를 비교
-    if infeasibility is None:
-        for rider in all_riders:
-            if rider_usage[rider.type] > rider.available_number:
-                infeasibility = f'The number of used riders of type {rider.type} exceeds the given available limit!'
-                break
-
-    if infeasibility:
-        print(f"Infeasibility found: {infeasibility}")
+    if len(assigned_orders) != K:
+        print(f"Infeasibility: Not all orders are assigned.")
         return False
-    else:
-        return True
 
+    return True
 
 def calculate_average_cost(solution, all_orders, all_riders, dist_mat, K):
     total_cost = 0
@@ -487,5 +455,3 @@ def calculate_average_cost(solution, all_orders, all_riders, dist_mat, K):
         total_cost += cost
     average_cost = total_cost / K
     return average_cost
-
-
